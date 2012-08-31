@@ -177,10 +177,20 @@ int main( int argc, char** argv )
 
 		decomposeCommandLine( argc, argv, cl_options, cl_commands );
 
-		// create the graph
-		ttl::Graph graph;
-		std::vector<ttl::Graph::Node*> nodes;
-		nodes.reserve( 50 );
+		// create graphs
+		typedef std::vector<ttl::Graph> GraphVector;
+		typedef std::vector<ttl::Graph::Node*> NodeList;
+		typedef std::vector<NodeList > InputNode;
+		GraphVector allGraphs;
+		InputNode allInputNodes;
+		
+		NodeList nodesTest;
+		nodesTest.reserve( 50 );
+		allInputNodes.push_back( nodesTest );
+		
+		ttl::Graph graphTest;
+		allGraphs.push_back( graphTest );
+		
 		std::vector<std::ssize_t> range;
 		std::vector<double> renderscale;
 		std::size_t step;
@@ -436,7 +446,6 @@ int main( int argc, char** argv )
 
 				BOOST_FOREACH( const std::vector<std::string>& command, cl_commands )
 				{
-
 					std::string userNodeName = command[0];
 					boost::algorithm::to_lower( userNodeName );
 					std::string nodeFullName = userNodeName;
@@ -480,8 +489,14 @@ int main( int argc, char** argv )
 						// it replaces all the process.
 						// --help,h --version,v --verbose,V --params --clips --props
 
-						ttl::Graph::Node& currentNode = graph.createNode( nodeFullName );
-
+						NodeList currentNodes;
+						
+						BOOST_FOREACH( ttl::Graph& graphIt, allGraphs )
+						{
+							currentNodes.push_back( &graphIt.createNode( nodeFullName ) );
+						}
+						ttl::Graph::Node& currentNode = *currentNodes.at(0);
+						
 						if( node_vm.count( kHelpOptionLongName ) )
 						{
 							displayNodeHelp( nodeFullName, currentNode, infoOptions, confOptions );
@@ -652,7 +667,15 @@ int main( int argc, char** argv )
 						{
 							const std::string nodeId = node_vm[kIdOptionLongName].as<std::string > ();
 							idNames.push_back( nodeId );
-							graph.renameNode( currentNode, nodeId );
+							//graph.renameNode( currentNode, nodeId );
+							InputNode::iterator   itNode;
+							GraphVector::iterator itGraph = allGraphs.begin();
+							NodeList::iterator    itCurrentNode = currentNodes.begin();
+							
+							for( itNode = allInputNodes.begin() ; itNode < allInputNodes.end(); itNode++, itGraph++, itCurrentNode++ )
+							{
+								(*itGraph).renameNode( **itCurrentNode, nodeId );
+							}
 						}
 						
 						// Analyse attributes: parameters / clips
@@ -778,7 +801,7 @@ int main( int argc, char** argv )
 						}
 
 						// connect current node to previous node(s)
-						if( nodes.size() > 0 ) // if not the first node
+						if( allInputNodes.size() > 0 && allInputNodes.at(0).size() > 0 ) // if not the first node
 						{
 							if( clipsToConnect.size() == 0 )
 							{
@@ -790,7 +813,14 @@ int main( int argc, char** argv )
 								// if we have an input clip
 								if( currentNode.getClipImageSet().getClips().size() > 1 )
 								{
-									graph.connect( *nodes.back(), currentNode );
+									InputNode::iterator   itNode;
+									GraphVector::iterator itGraph = allGraphs.begin();
+									NodeList::iterator    itCurrentNode = currentNodes.begin();
+									
+									for( itNode = allInputNodes.begin() ; itNode < allInputNodes.end(); itNode++, itGraph++, itCurrentNode++ )
+									{
+										(*itGraph).connect( *(*itNode).back(), **itCurrentNode );
+									}
 								}
 							}
 							else
@@ -812,15 +842,24 @@ int main( int argc, char** argv )
 										//TUTTLE_TCOUT( "Connect the clip " << clip.first->getName() );
 										// test if it's an index
 										const int relativeIndex = std::abs( boost::lexical_cast<int>( clip.second ) );
-										const int absIndex = nodes.size() - relativeIndex;
-										if( absIndex < 0 || absIndex >= (int) nodes.size() )
+										const int absIndex = allInputNodes.at(0).size() - relativeIndex;
+										if( absIndex < 0 || absIndex >= (int) allInputNodes.at(0).size() )
 										{
 											using namespace ttl;
 											using tuttle::quotes;
 											BOOST_THROW_EXCEPTION(
 																   exception::Value() << exception::user() + "The relative index \"" + -relativeIndex + "\" for the connection of the clip " + quotes( clip.first->getName() ) + " on node " + quotes( currentNode.getName() ) + " is not valid." );
 										}
-										graph.connect( *nodes[absIndex], currentNode.getAttribute( clip.first->getName() ) );
+										
+										InputNode::iterator   itNode;
+										GraphVector::iterator itGraph = allGraphs.begin();
+										NodeList::iterator    itCurrentNode = currentNodes.begin();
+										
+										for( itNode = allInputNodes.begin() ; itNode < allInputNodes.end(); itNode++, itGraph++, itCurrentNode++ )
+										{
+											(*itGraph).connect( *(*itNode)[absIndex], (*itCurrentNode)->getAttribute( clip.first->getName() ) );
+										}
+										
 									}
 									catch( ... )
 									{
@@ -828,7 +867,14 @@ int main( int argc, char** argv )
 										// If the node doesn't exist it will throw an exception.
 										try
 										{
-											graph.connect( graph.getNode( clip.second ), currentNode.getAttribute( clip.first->getName() ) );
+											InputNode::iterator   itNode;
+											GraphVector::iterator itGraph = allGraphs.begin();
+											NodeList::iterator    itCurrentNode = currentNodes.begin();
+											
+											for( itNode = allInputNodes.begin() ; itNode < allInputNodes.end(); itNode++, itGraph++, itCurrentNode++ )
+											{
+												(*itGraph).connect( (*itGraph).getNode( clip.second ), (*itCurrentNode)->getAttribute( clip.first->getName() ) );
+											}
 										}
 										catch( ... )
 										{
@@ -843,7 +889,10 @@ int main( int argc, char** argv )
 							}
 						}
 
-						nodes.push_back( &currentNode );
+						BOOST_FOREACH( NodeList& inputNodes, allInputNodes )
+						{
+							inputNodes.push_back( &currentNode );
+						}
 					}
 					catch( const boost::program_options::error& e )
 					{
@@ -886,7 +935,6 @@ int main( int argc, char** argv )
 
 		if( enableVerbose )
 		{
-
 			BOOST_FOREACH( const std::vector<std::string>& node, cl_commands )
 			{
 				TUTTLE_COUT( "[" << node[0] << "]" );
@@ -898,7 +946,7 @@ int main( int argc, char** argv )
 			}
 		}
 		
-		if( nodes.size() == 0 )
+		if( allInputNodes.at(0).size() == 0 )
 			// nothing to do!
 			exit( -1 );
 
@@ -915,8 +963,16 @@ int main( int argc, char** argv )
 		options.setContinueOnError( continueOnError );
 		options.setForceIdentityNodesProcess( forceIdentityNodesProcess );
 		
-		// Execute the graph
-		graph.compute( *nodes.back(), options );
+		// Execute all graphs
+		//graph.compute( *nodes.back(), options );
+		
+		InputNode::iterator   itNode;
+		GraphVector::iterator itGraph = allGraphs.begin();
+		
+		for( itNode = allInputNodes.begin() ; itNode < allInputNodes.end(); itNode++, itGraph++ )
+		{
+			(*itGraph).compute( *(*itNode).back(), options );
+		}
 	}
 	catch( const tuttle::exception::Common& e )
 	{
